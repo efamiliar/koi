@@ -1,9 +1,13 @@
+from dataclasses import dataclass
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import QImage
 from krita import DockWidget, Krita
-from urllib import request
+from urllib import request, parse
 from io import BytesIO
+import json
+import base64
+import requests
 
 
 class Koi(DockWidget):
@@ -38,9 +42,9 @@ class Koi(DockWidget):
         self.steps.setRange(5, 150)
         self.steps.setValue(32)
 
-        self.seed = QSpinBox(self.input_widget)
-        self.seed.setRange(1, 100000000)
-        self.seed.setValue(1337)
+        self.seed = QLineEdit(self.input_widget)
+        self.prompt.setPlaceholderText("Optional seed")
+        self.seed.setText("")
 
         self.sketch_strengh = QDoubleSpinBox(self.input_widget)
         self.sketch_strengh.setRange(0.05, 0.95)
@@ -67,7 +71,7 @@ class Koi(DockWidget):
 
         self.endpoint = QLineEdit(self.endpoint_widget)
         self.endpoint.setPlaceholderText("GPU Endpoint")
-        self.endpoint.setText("http://127.0.0.1:8888/api/img2img")
+        self.endpoint.setText("http://127.0.0.1:7860/api/predict")
 
         self.endpoint_layout.addRow("Endpoint", self.endpoint)
         self.endpoint_widget.setLayout(self.endpoint_layout)
@@ -86,22 +90,25 @@ class Koi(DockWidget):
         """
         pass
 
-    def get_extra_args(self):
+    def make_request(self, image_base64):
         """
         Take all input from user and construct a mapping object.
 
         Return: Encoded bytes to send as data in post request.
         """
+        prompt = str(self.prompt.text())
+        steps = str(self.steps.value())
+        sketch_strength = str(1.0-self.sketch_strengh.value())
+        seed = str(self.seed.text())
+        prompt_strength = str(self.prompt_strength.value())
+        data = "[\"data:image/jpeg;base64," + image_base64 + "\",\""+ prompt +"\"," + sketch_strength  + "," +\
+               steps + ", 1, 1, 512, 512," + prompt_strength + \
+               ",0, 1, \"cuda\",\"" + seed + \
+               "\", \"outputs/img2img-samples\", \"png\", false, false]"
 
-        headers = {
-            "prompt": str(self.prompt.text()),
-            "steps": str(self.steps.value()),
-            "seed": str(self.seed.value()),
-            "sketch_strength": str(1.0-self.sketch_strengh.value()),
-            "prompt_strength": str(self.prompt_strength.value()),
-        }
+        req = "{\"fn_index\": 0, \"data\":" +data + ",\"session_hash\": \"939c4jg2bnk\"}"
 
-        return headers
+        return req
 
     def get_endpoint(self):
         return str(self.endpoint.text())
@@ -113,15 +120,23 @@ class Koi(DockWidget):
     def pingServer(self):
         # get the current layer as a I/O buffer
         image_buffer = self.layer2buffer()
+        #image_encodedBytes = base64.b64encode(image_buffer.getvalue)
+        image_encodedStr = encoded = base64.b64encode(image_buffer.getvalue()).decode("UTF-8")
 
-        headers = self.get_extra_args()
-        headers.update({"Content-Type": "application/octet-stream"})
+        data = self.make_request(image_encodedStr)
+        header = {"Content-Type": "application/json"}
 
-        r = request.Request(url=self.get_endpoint(), data=image_buffer, headers=headers)
-
+        r = requests.post(url=self.get_endpoint(), data=data, headers=header)
+        responseJson = r.json();
         # wait for response and read image
-        with request.urlopen(r, timeout=60) as response:
-            returned_image = QImage.fromData(response.read())
+        
+        #with request.urlopen(r, timeout=60) as response:
+         #   resp = json.dumps(response.read())
+        image_data=responseJson["data"][0].replace('data:image/png;base64,', '')
+        responseSeed = responseJson["data"][1].rsplit('=', 1)[1]
+        self.seed.setText(responseSeed)
+        base64.b64decode(image_data)
+        returned_image = QImage.fromData(base64.b64decode(image_data))
 
         # create a new layer and add it to the document
         application = Krita.instance()
@@ -165,7 +180,7 @@ class Koi(DockWidget):
         # now make a buffer and save the image into it
         buffer = QBuffer()
         buffer.open(QIODevice.ReadWrite)
-        qImage.save(buffer, format="PNG")
+        qImage.save(buffer, format="JPEG")
 
         # write the data into a buffer and jump to start of file
         image_byte_buffer = BytesIO()
