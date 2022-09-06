@@ -1,5 +1,29 @@
 # koi 🎣
 
+
+Adaptation of the plugin [koi](https://github.com/nousr/koi) to work locally. It works correctly with the [Optimized Stable Diffusion](https://github.com/neonsecret/stable-diffusion) version.
+
+## Installation
+Install Optimized Stable Diffusion according to the instructions on its page.
+
+Install Krita plugin according to the bellow instructions.
+
+## Quick Start
+
+Run in Optimized Stable Diffusion folder:
+
+`conda activate ldm`
+
+`python optimizedSD/img2img_gradio.py`
+
+Create a new krita document 512x512 size.
+
+Draw something on the document.
+
+push Dream button
+
+
+
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nousr/koi/blob/main/koi_colab_backend.ipynb) <a href="https://discord.gg/hDBbsXDd6K"><img alt="Join us on Discord" src="https://img.shields.io/discord/823813159592001537?color=5865F2&logo=discord&logoColor=white"></a>
 
 koi is an open source plug-in that allows you to use AI to accelerate your art workflow!

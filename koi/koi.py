@@ -10,6 +10,9 @@ import base64
 import requests
 
 
+sizes = ["DDIM", "PLMS", 'k_dpm_2_a', 'k_dpm_2', 'k_euler_a', 'k_euler', 'k_heun', 'k_lms']
+
+
 class Koi(DockWidget):
     def __init__(self):
         """
@@ -37,10 +40,11 @@ class Koi(DockWidget):
         self.prompt.setText(
             "A beautiful mountain landscape in the style of greg rutkowski, oils on canvas."
         )
+    
 
         self.steps = QSpinBox(self.input_widget)
         self.steps.setRange(5, 150)
-        self.steps.setValue(32)
+        self.steps.setValue(50)
 
         self.seed = QLineEdit(self.input_widget)
         self.prompt.setPlaceholderText("Optional seed")
@@ -76,13 +80,18 @@ class Koi(DockWidget):
         self.endpoint_layout.addRow("Endpoint", self.endpoint)
         self.endpoint_widget.setLayout(self.endpoint_layout)
         self.mainWidget.layout().addWidget(self.endpoint_widget)
+        
+        self.status = QLabel('Status')
+        self.endpoint_layout.addRow(self.status)
 
         # Dream button ===
         self.dream = QPushButton(self.mainWidget)
         self.dream.setText("Dream")
         self.dream.clicked.connect(self.pingServer)
+        
 
         self.mainWidget.layout().addWidget(self.dream)
+        
 
     def canvasChanged(self, canvas):
         """
@@ -90,7 +99,7 @@ class Koi(DockWidget):
         """
         pass
 
-    def make_request(self, image_base64):
+    def generateRequest(self, image_base64, width, height):
         """
         Take all input from user and construct a mapping object.
 
@@ -99,15 +108,13 @@ class Koi(DockWidget):
         prompt = str(self.prompt.text())
         steps = str(self.steps.value())
         sketch_strength = str(1.0-self.sketch_strengh.value())
-        seed = str(self.seed.text())
+        seed = str(self.seed.text().strip())
         prompt_strength = str(self.prompt_strength.value())
-        data = "[\"data:image/jpeg;base64," + image_base64 + "\",\""+ prompt +"\"," + sketch_strength  + "," +\
-               steps + ", 1, 1, 512, 512," + prompt_strength + \
-               ",0, 1, \"cuda\",\"" + seed + \
-               "\", \"outputs/img2img-samples\", \"png\", false, false]"
-
-        req = "{\"fn_index\": 0, \"data\":" +data + ",\"session_hash\": \"939c4jg2bnk\"}"
-
+               
+        req = f"""{{"fn_index": 0, "data":["data:image/jpeg;base64,{image_base64}","{prompt}",{sketch_strength},\
+            {steps},1,1,{height},{width},{prompt_strength},0,1,"cuda","{seed}","outputs/img2img-samples",\
+            "png",false,false],"session_hash": "939c4jg2bnk"}}"""
+        
         return req
 
     def get_endpoint(self):
@@ -118,24 +125,30 @@ class Koi(DockWidget):
         return f"dream_{self.ITER}"
 
     def pingServer(self):
+        
+        self.showInfoMessage('Generating image ...')
+
         # get the current layer as a I/O buffer
-        image_buffer = self.layer2buffer()
-        #image_encodedBytes = base64.b64encode(image_buffer.getvalue)
+        try:
+            image_buffer, width, height  = self.layer2buffer()
+        except BaseException as e:
+            self.showerrorMessage(e)
+            return
+        
         image_encodedStr = encoded = base64.b64encode(image_buffer.getvalue()).decode("UTF-8")
 
-        data = self.make_request(image_encodedStr)
+        data = self.generateRequest(image_encodedStr, width, height)
         header = {"Content-Type": "application/json"}
-
-        r = requests.post(url=self.get_endpoint(), data=data, headers=header)
-        responseJson = r.json();
-        # wait for response and read image
         
-        #with request.urlopen(r, timeout=60) as response:
-         #   resp = json.dumps(response.read())
+        try: 
+            responseJson = self.post(self.get_endpoint(),data)
+        except requests.exceptions.RequestException as e:
+            self.showerrorMessage(e)
+            return
+        
         image_data=responseJson["data"][0].replace('data:image/png;base64,', '')
         responseSeed = responseJson["data"][1].rsplit('=', 1)[1]
         self.seed.setText(responseSeed)
-        base64.b64decode(image_data)
         returned_image = QImage.fromData(base64.b64decode(image_data))
 
         # create a new layer and add it to the document
@@ -155,9 +168,11 @@ class Koi(DockWidget):
             returned_image.width(),
             returned_image.height(),
         )
-
+        
+        self.showSuccessMessage('Done')
         # update user
         doc.refreshProjection()
+        return
 
     def layer2buffer(self):
         """
@@ -166,6 +181,12 @@ class Koi(DockWidget):
         # get current document
         currentDocument = Krita.instance().activeDocument()
         width, height = (currentDocument.width(), currentDocument.height())
+        
+        if (width % 64 != 0):
+            raise BaseException('Document width error, must be multiple of 64')
+        
+        if (height % 64 != 0):
+            raise BaseException('Document height error, must be multiple of 64')
 
         # get current layer
         currentLayer = currentDocument.activeNode()
@@ -189,4 +210,25 @@ class Koi(DockWidget):
         buffer.close()
         image_byte_buffer.seek(0)
 
-        return image_byte_buffer
+        return image_byte_buffer, width, height
+
+    def showInfoMessage(self,message):
+        label = f'<p style="color:blue">{message}</p>'
+        self.status.setText(label)
+        
+    def showSuccessMessage(self,message):
+        label = f'<p style="color:green">{message}</p>'
+        self.status.setText(label)
+    
+    def showerrorMessage(self,message):
+        label = f'<p style="color:red">{message}</p>'
+        self.status.setText(label)
+    
+    def post(self, url, body):
+        req = request.Request(url)
+        req.add_header('Content-Type', 'application/json')
+        body_encoded = body.encode('utf-8')
+        req.add_header('Content-Length', str(len(body_encoded)))
+        with request.urlopen(req, body_encoded ) as res:
+            return json.loads(res.read())
+        
